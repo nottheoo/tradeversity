@@ -2770,10 +2770,15 @@ function previewPaste(){
   // Detect separator
   const sep = lines[0].includes('\t') ? '\t' : ',';
   const headers = lines[0].split(sep).map(h=>h.replace(/"/g,'').trim().toLowerCase());
-  const isTV = _isTradingViewCSV(headers);
+  const isTV  = _isTradingViewCSV(headers);
+  const isKML = _isKMLCSV(headers);
   const filledCount = lines.filter(l=>l.toLowerCase().includes('filled')).length;
+  const tradeCount  = lines.length - 1;
   preview.style.display='block';
-  preview.innerHTML = isTV
+  preview.innerHTML = isKML
+    ? '<div style="background:rgba(0,242,255,0.07);border:1px solid rgba(0,242,255,0.2);border-radius:7px;padding:10px">'+
+      '✅ <b style="color:var(--green)">KML / Tradovate format detected</b> — <b>'+tradeCount+'</b> trades found</div>'
+    : isTV
     ? '<div style="background:rgba(0,242,255,0.07);border:1px solid rgba(0,242,255,0.2);border-radius:7px;padding:10px">'+
       '✅ <b style="color:var(--green)">TradingView format detected</b> — ~<b>'+filledCount+'</b> filled orders found</div>'
     : '<div style="background:rgba(255,181,71,0.07);border:1px solid rgba(255,181,71,0.2);border-radius:7px;padding:10px">'+
@@ -2926,12 +2931,151 @@ function _showToast(msg, color){
   setTimeout(()=>toast.remove(), 3500);
 }
 
+// ===== KML / TRADOVATE PERFORMANCE CSV PARSER =====
+// Columns: symbol,_priceFormat,_priceFormatType,_tickSize,buyFillId,sellFillId,qty,buyPrice,sellPrice,pnl,boughtTimestamp,soldTimestamp,duration
+function _isKMLCSV(headers){
+  const needed = ['symbol','buyprice','sellprice','pnl','boughttimestamp','soldtimestamp'];
+  return needed.filter(h=>headers.includes(h)).length >= 5;
+}
+
+function _parseKMLCSV(lines, sep, input){
+  const headers = lines[0].split(sep).map(h=>h.replace(/"/g,'').trim().toLowerCase());
+
+  const maxId = trades.length ? Math.max(...trades.map(t=>t.id||0)) : 0;
+  let nextId = maxId + 1;
+  let imported = 0;
+
+  function parsePnl(raw){
+    // handles: "$1,120.00", "$(235.00)", "$700.00"
+    if(!raw) return 0;
+    const negative = raw.includes('(') && raw.includes(')');
+    const num = parseFloat(raw.replace(/[$(),\s]/g,''))||0;
+    return negative ? -num : num;
+  }
+
+  function normKMLDate(ts){
+    // "05/11/2026 14:54:14" → "2026-05-11"
+    if(!ts) return '';
+    const [datePart] = ts.split(' ');
+    if(!datePart) return '';
+    const p = datePart.split('/');
+    if(p.length===3){
+      // MM/DD/YYYY
+      if(p[2].length===4) return p[2]+'-'+p[0].padStart(2,'0')+'-'+p[1].padStart(2,'0');
+      // DD/MM/YYYY fallback
+      return p[2]+'-'+p[1].padStart(2,'0')+'-'+p[0].padStart(2,'0');
+    }
+    return datePart;
+  }
+
+  function normKMLTime(ts){
+    if(!ts) return '';
+    const parts = ts.split(' ');
+    return parts[1]||'';
+  }
+
+  for(let i=1;i<lines.length;i++){
+    // handle commas inside quoted pnl values like "$1,120.00"
+    const cols = [];
+    let cur='', inQuote=false;
+    for(let c=0;c<lines[i].length;c++){
+      const ch=lines[i][c];
+      if(ch==='"'){ inQuote=!inQuote; continue; }
+      if(ch===sep && !inQuote){ cols.push(cur.trim()); cur=''; }
+      else cur+=ch;
+    }
+    cols.push(cur.trim());
+    if(cols.length<5) continue;
+
+    const row={};
+    headers.forEach((h,idx)=>{ row[h]=cols[idx]!==undefined?cols[idx]:''; });
+
+    const symbol = row['symbol']||'';
+    if(!symbol) continue;
+
+    const buyPrice  = parseFloat(row['buyprice'])||0;
+    const sellPrice = parseFloat(row['sellprice'])||0;
+    const qty       = parseFloat(row['qty'])||1;
+    const pnl       = parsePnl(row['pnl']);
+    const boughtTs  = row['boughttimestamp']||'';
+    const soldTs    = row['soldtimestamp']||'';
+
+    // Direction: if buyFillId is the "aggressor" (entry), check which timestamp is earlier
+    // boughtTimestamp = when buy order filled, soldTimestamp = when sell order filled
+    // If bought > sold → trader sold first (SHORT), otherwise LONG
+    let dir = 'Buy';
+    if(boughtTs && soldTs){
+      const bt = new Date(boughtTs.replace(/(\d{2})\/(\d{2})\/(\d{4})/,'$3-$1-$2'));
+      const st = new Date(soldTs.replace(/(\d{2})\/(\d{2})\/(\d{4})/,'$3-$1-$2'));
+      // entry is the earlier timestamp
+      if(bt < st){ dir='Buy'; } else { dir='Sell'; }
+    }
+
+    const entryTs = dir==='Buy' ? boughtTs : soldTs;
+    const date    = normKMLDate(entryTs);
+    const time    = normKMLTime(entryTs);
+    const entry   = dir==='Buy' ? buyPrice : sellPrice;
+    const exit    = dir==='Buy' ? sellPrice : buyPrice;
+
+    // Duplicate check
+    const dup = trades.find(t=>
+      t.asset===symbol &&
+      t.date===date &&
+      Math.abs(parseFloat(t.pnl)-pnl)<0.01
+    );
+    if(dup) continue;
+
+    let result = pnl>0 ? 'Win' : pnl<0 ? 'Loss' : 'BE';
+
+    trades.push({
+      id: nextId++,
+      date,
+      time,
+      asset: symbol,
+      market: 'Futures',
+      session: 'NY',
+      dir,
+      entry: String(entry),
+      exit:  String(exit),
+      sl:'', tp:'',
+      risk: String(Math.abs(pnl)),
+      rr:'',
+      pnl: String(pnl.toFixed(2)),
+      result,
+      quality:'',
+      strategy:'#KML',
+      sessionTag:'',
+      setup:'Imported from KML/Tradovate',
+      entryReason:'', exitReason:'',
+      emotion:'', mistakes:'', lessons:'',
+      _imported: true
+    });
+    imported++;
+  }
+
+  save();
+  renderDashboard();
+  renderCalendar();
+  renderJournal();
+  if(input) input.value='';
+  _showToast(
+    imported>0 ? `✅ ${imported} trades imported from KML` : '⚠ No trades found in KML file',
+    imported>0 ? '#00f2ff' : '#ffd700'
+  );
+}
+
 function _parseAndImport(text, input){
   const lines = text.split('\n').map(l=>l.trim()).filter(l=>l);
   if(!lines.length){ alert('File empty!'); return; }
 
   const sep = lines[0].includes('\t') ? '\t' : ',';
+  // Use basic split for header only (no quoted values in headers)
   const headers = lines[0].split(sep).map(h=>h.replace(/"/g,'').trim().toLowerCase());
+
+  // Auto-detect KML/Tradovate Performance CSV
+  if(_isKMLCSV(headers)){
+    return _parseKMLCSV(lines, sep, input);
+  }
 
   // Auto-detect TradingView CSV format
   if(_isTradingViewCSV(headers)){
@@ -3252,8 +3396,8 @@ function sendToTrade(){
   <div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:24px;width:min(600px,95vw);max-height:90vh;overflow-y:auto">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
       <div>
-        <div style="font-family:var(--font-head);font-size:17px;font-weight:700">📋 Paste from TradingView</div>
-        <div style="font-size:12px;color:var(--text3);margin-top:3px">Select all rows in Order History → Ctrl+C → Paste below</div>
+        <div style="font-family:var(--font-head);font-size:17px;font-weight:700">📋 Paste from TradingView / KML</div>
+        <div style="font-size:12px;color:var(--text3);margin-top:3px">Paste TradingView or KML/Tradovate data below — format detected automatically</div>
       </div>
       <button onclick="closePasteModal()" style="background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer">✕</button>
     </div>
