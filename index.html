@@ -61,6 +61,14 @@
 <title>TRADEVERSITY — Professional Trading Journal</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<!-- Supabase client (UMD) -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script>
+  // Supabase config — provided by you (anon/publishable key only)
+  const SUPABASE_URL = 'https://snsinlyovmsznmesbako.supabase.co';
+  const SUPABASE_ANON_KEY = 'sb_publishable_BvTrmek7JiIe0kb-wqaNKA_av2ipfk1';
+  const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+</script>
 <style>
 :root{
   --bg:#050508;
@@ -660,6 +668,10 @@ select.form-input option{background:var(--bg3)}
         </button>
       </div>
     </div>
+    <button class="btn btn-outline btn-sm" onclick="exportToAdmin()" style="border-color:rgba(0,242,255,0.3);color:var(--green);margin-right:8px">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Export to Admin
+    </button>
     <button class="btn btn-green btn-sm" onclick="openAddTrade()">+ New Trade</button>
   </div>
   <div class="content">
@@ -1184,6 +1196,10 @@ Just paste it as-is!"
         <div class="export-btn" onclick="genReport('monthly')">
           <div class="export-btn-icon">📅</div>
           <div class="export-btn-label">Monthly Report</div>
+        </div>
+        <div class="export-btn" onclick="exportToAdmin()">
+          <div class="export-btn-icon">🔒</div>
+          <div class="export-btn-label">Export to Admin</div>
         </div>
       </div>
       <div id="report-output"></div>
@@ -2067,6 +2083,47 @@ function exportCSV(){
 }
 function exportJSON(){
   download('trades.json','application/json',JSON.stringify(trades,null,2));
+}
+// Export full package for admin review (trades + stats + config)
+async function exportToAdmin(){
+  const name = currentUser || 'user';
+  if(!trades.length){
+    if(!confirm('No trades found. Export empty profile for admin?')) return;
+  }
+  const payload = {
+    name: name,
+    generatedAt: new Date().toISOString(),
+    config: getUserCfg(),
+    stats: calcStats(),
+    trades: trades,
+    checklists: checklists
+  };
+
+  // Try upload to Supabase first
+  try{
+    const toInsert = [{ student_name: name, username: name, payload }];
+    const { data, error } = await supabaseClient.from('exports').insert(toInsert).select();
+    if(error){
+      throw error;
+    }
+    alert('Export uploaded to Supabase. Admin can view it from the dashboard.');
+    return;
+  }catch(err){
+    console.warn('Supabase upload failed:', err.message || err);
+    // fallback: open admin page and postMessage (if admin is open) or download
+    const adminUrl = 'admin.html';
+    const win = window.open(adminUrl, '_blank');
+    if(win){
+      const trySend = ()=>{ try{ win.postMessage({type:'student_export', payload}, window.location.origin); }catch(e){} };
+      trySend(); setTimeout(trySend,300); setTimeout(trySend,800);
+      alert('Supabase upload failed — attempted to send to open admin tab, or downloaded file if popup blocked.');
+      return;
+    }
+    const safeName = name.replace(/[^a-z0-9_\-]/gi,'_');
+    const filename = safeName + '_data.json';
+    download(filename,'application/json',JSON.stringify(payload,null,2));
+    alert('Supabase upload failed and popup blocked — downloaded export as '+filename);
+  }
 }
 function download(name,type,content){
   const a=document.createElement('a');
