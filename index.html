@@ -65,9 +65,10 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script>
   // Supabase config — provided by you (anon/publishable key only)
-  const SUPABASE_URL = 'https://snsinlyovmsznmesbako.supabase.co';
-  const SUPABASE_ANON_KEY = 'sb_publishable_BvTrmek7JiIe0kb-wqaNKA_av2ipfk1';
-  const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const supabaseClient = supabase.createClient(
+    'https://snsinlyovmsznmesbako.supabase.co', 
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNuc2lubHlvdm1zem5tZXNiYWtvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAzMTIxNTcsImV4cCI6MjA5NTg4ODE1N30.lMhqMRJ4gNyEqA8szRM46SbsOiamAJ9xPXp6UhVSi2g'
+  );
 </script>
 <style>
 :root{
@@ -3804,6 +3805,7 @@ function sendToTrade(){
 }
 
 </script>
+
 <!-- MOBILE BOTTOM NAV -->
 <nav id="mobile-nav">
   <button class="mob-nav-item active" onclick="nav('dashboard');setMobNav(this)">
