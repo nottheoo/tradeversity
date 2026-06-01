@@ -623,6 +623,10 @@ select.form-input option{background:var(--bg3)}
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
       Daily Plan
     </button>
+    <button class="nav-item" onclick="nav('converter')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+      AI Converter
+    </button>
   </nav>
   <div class="sb-footer">
     <div class="sb-account">
@@ -1082,6 +1086,59 @@ select.form-input option{background:var(--bg3)}
         </div>
       </div>
     </div><!-- end daily plan page -->
+
+    <!-- AI FORMAT CONVERTER -->
+    <div id="page-converter" class="page">
+      <div class="section-header" style="margin-bottom:20px">
+        <span class="section-title">🤖 AI Trade History Converter</span>
+        <div style="font-size:12px;color:var(--text3);margin-top:4px">Paste your trade history in ANY format — AI will understand it and import it automatically</div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+        <!-- INPUT -->
+        <div class="chart-card">
+          <div class="chart-card-header">
+            <span class="chart-card-title">📥 Paste Your Data</span>
+            <span id="conv-fmt-badge" style="font-size:11px;color:var(--text3);background:var(--bg3);padding:3px 8px;border-radius:5px">Format: —</span>
+          </div>
+          <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.7">
+            Works with <b style="color:var(--text)">any format</b>: TradingView copy-paste, MT5 CSV, Excel export, broker statements, manual notes, screenshots text... 
+            The AI reads it and converts it.
+          </div>
+          <textarea id="conv-input" rows="14" placeholder="Paste anything here:
+
+Example 1 — Raw notes:
+EURUSD long 1.0850 exit 1.0920 lot 0.5 date 2026-05-10
+
+Example 2 — Broker table:
+Date | Symbol | Side | Entry | Exit | Lots | PnL
+2026-05-10 | EURUSD | Buy | 1.0850 | 1.0920 | 0.5 | +350
+
+Example 3 — TradingView paste, MT5, Excel...
+Just paste it as-is!" 
+            style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font-mono);font-size:12px;padding:12px;resize:vertical;outline:none;box-sizing:border-box"
+            oninput="convSniffFormat(this.value)"></textarea>
+          <div style="display:flex;gap:8px;margin-top:12px">
+            <button class="btn btn-green" style="flex:1;font-size:14px" onclick="runConverter()">⚡ Convert & Import</button>
+            <button class="btn btn-outline" onclick="document.getElementById('conv-input').value='';document.getElementById('conv-output').innerHTML='';document.getElementById('conv-fmt-badge').textContent='Format: —'">Clear</button>
+          </div>
+        </div>
+
+        <!-- OUTPUT / PREVIEW -->
+        <div class="chart-card">
+          <div class="chart-card-header">
+            <span class="chart-card-title">📤 Preview</span>
+            <span id="conv-count-badge" style="font-size:11px;color:var(--text3)"></span>
+          </div>
+          <div id="conv-output" style="min-height:200px;font-size:12px;color:var(--text3);display:flex;align-items:center;justify-content:center;text-align:center;padding:20px">
+            Paste your data on the left and click Convert
+          </div>
+          <div id="conv-import-bar" style="display:none;margin-top:12px">
+            <button class="btn btn-green" style="width:100%;font-size:14px" onclick="convDoImport()">✅ Import These Trades</button>
+          </div>
+        </div>
+      </div>
+    </div><!-- end converter page -->
 
     <!-- AI REVIEW -->
     <div id="page-ai" class="page">
@@ -1550,7 +1607,7 @@ function save(){
 
 // ===== NAVIGATION =====
 // Simple page navigation helper to show/hide sections
-const pageTitles = {dashboard:'Dashboard',calendar:'Performance Calendar',journal:'Trade Journal',checklist:'Checklists',statistics:'Statistics',ai:'AI Review',reports:'Reports',calculator:'Calculator',dailyplan:'Daily Plan'};
+const pageTitles = {dashboard:'Dashboard',calendar:'Performance Calendar',journal:'Trade Journal',checklist:'Checklists',statistics:'Statistics',ai:'AI Review',reports:'Reports',calculator:'Calculator',dailyplan:'Daily Plan',converter:'AI Trade Converter'};
 function setMobNav(el){
   document.querySelectorAll('.mob-nav-item').forEach(x=>x.classList.remove('active'));
   if(el) el.classList.add('active');
@@ -2770,19 +2827,21 @@ function previewPaste(){
   // Detect separator
   const sep = lines[0].includes('\t') ? '\t' : ',';
   const headers = lines[0].split(sep).map(h=>h.replace(/"/g,'').trim().toLowerCase());
-  const isTV  = _isTradingViewCSV(headers);
-  const isKML = _isKMLCSV(headers);
-  const filledCount = lines.filter(l=>l.toLowerCase().includes('filled')).length;
-  const tradeCount  = lines.length - 1;
+  const isKML  = _isKMLCSV(headers);
+  const isTVhdr= !isKML && _isTradingViewCSV(headers);
+  const isTVml = !isKML && !isTVhdr && _isTVMultiline(text);
+  const isTV   = isTVhdr || isTVml;
+  const orderCount = lines.filter(l=>_isSide(l.trim())).length;
+  const tradeCount = lines.length-1;
   preview.style.display='block';
   preview.innerHTML = isKML
     ? '<div style="background:rgba(0,242,255,0.07);border:1px solid rgba(0,242,255,0.2);border-radius:7px;padding:10px">'+
       '✅ <b style="color:var(--green)">KML / Tradovate format detected</b> — <b>'+tradeCount+'</b> trades found</div>'
     : isTV
     ? '<div style="background:rgba(0,242,255,0.07);border:1px solid rgba(0,242,255,0.2);border-radius:7px;padding:10px">'+
-      '✅ <b style="color:var(--green)">TradingView format detected</b> — ~<b>'+filledCount+'</b> filled orders found</div>'
+      '✅ <b style="color:var(--green)">TradingView format detected</b>'+(isTVml?' <span style="color:var(--text3);font-size:11px">(multi-line)</span>':'')+' — <b>'+orderCount+'</b> orders found</div>'
     : '<div style="background:rgba(255,181,71,0.07);border:1px solid rgba(255,181,71,0.2);border-radius:7px;padding:10px">'+
-      '⚠️ Format not recognized. Headers: <span style="color:var(--text3)">'+headers.slice(0,6).join(', ')+'</span></div>';
+      '⚠️ Format not recognized — will try generic import</div>';
 }
 
 function importFromPaste(){
@@ -2792,135 +2851,232 @@ function importFromPaste(){
   closePasteModal();
 }
 
-// ===== TRADINGVIEW CSV PARSER =====
-// TradingView Order History CSV columns:
-// Symbol, Side, Type, Quantity, Limit price, Stop price, Fill price, Status, Commission, Placed time, Filled time
-function _isTradingViewCSV(headers){
-  // TV headers detection
-  const tvHeaders = ['symbol','side','type','quantity','fill price','status','placed time','filled time'];
-  const count = tvHeaders.filter(h => headers.includes(h)).length;
-  return count >= 4;
+// ===== TRADINGVIEW UNIVERSAL PARSER =====
+// Handles ALL formats:
+//  1. Multi-line paste (symbol / side / type / qty+prices / dates — each on own line)
+//  2. Single-line CSV/TSV with headers
+//  3. Junk lines at top (account balance, currency, %) → skipped automatically
+//  4. Any broker prefix: BLACKBULL: CME_MINI: BINANCE: FX: → stripped
+//  5. LONG and SHORT trades detected correctly via FIFO queue
+
+function _tvDate(s){
+  if(!s) return '';
+  s=s.replace('T',' ').trim();
+  if(/^\d{4}-\d{2}-\d{2}/.test(s)) return s.split(' ')[0];
+  const p=s.split(' ')[0].split('/');
+  if(p.length===3){
+    if(p[2].length===4) return p[2]+'-'+p[0].padStart(2,'0')+'-'+p[1].padStart(2,'0');
+    if(p[0].length===4) return p[0]+'-'+p[1].padStart(2,'0')+'-'+p[2].padStart(2,'0');
+  }
+  return s.split(' ')[0];
+}
+function _tvTime(s){ if(!s) return ''; return s.replace('T',' ').split(' ')[1]||''; }
+function _tvMarket(sym){
+  return /BTC|ETH|SOL|BNB|XRP|USDT/i.test(sym)?'Crypto'
+        :/NQ|ES|YM|RTY|CL|GC|USTEC|NQ1/i.test(sym)?'Futures':'Forex';
+}
+function _tvClean(sym){ return (sym||'').replace(/^[A-Z0-9_]+:/,'').trim(); }
+function _tvNum(s){ return parseFloat((s||'').toString().replace(/,/g,''))||0; }
+function _isDateStr(s){ return /^\d{4}-\d{2}-\d{2}[ T]/.test(s)||/^\d{2}\/\d{2}\/\d{4}/.test(s); }
+function _isSide(s){ return /^(buy|sell)$/i.test((s||'').trim()); }
+function _isOrdType(s){ return /^(market|limit|stop|stop limit)$/i.test((s||'').trim()); }
+function _isTVSymbol(s){
+  s=(s||'').trim();
+  return s.length>=2 && /^[A-Z_]/.test(s) && !_isSide(s) && !_isOrdType(s)
+      && !/^\d/.test(s) && !/^(USD|EUR|GBP|JPY|D|F|R)$/.test(s);
 }
 
-function _parseTradingViewCSV(lines, sep, input){
-  const headers = lines[0].split(sep).map(h=>h.replace(/"/g,'').trim().toLowerCase());
-  
-  // Only process Filled orders — pair Buy/Sell by symbol+date to make complete trades
-  const orders = [];
-  for(let i=1;i<lines.length;i++){
-    const cols = lines[i].split(sep).map(c=>c.replace(/"/g,'').trim());
-    if(cols.length < 4) continue;
-    const row = {};
-    headers.forEach((h,idx)=>{ row[h]=cols[idx]||''; });
-    if((row['status']||'').toLowerCase() !== 'filled') continue;
-    orders.push(row);
-  }
+// Detect TV multi-line paste format
+function _isTVMultiline(text){
+  const ls=text.split('\n').map(l=>l.trim()).filter(l=>l);
+  return ls.some(l=>_isSide(l)) && ls.some(l=>_isDateStr(l.split('\t')[0]));
+}
 
-  // Try to match Buy → Sell pairs by symbol (simple pairing: first buy + first sell = 1 trade)
-  const bySymbol = {};
-  orders.forEach(o=>{
-    const sym = o['symbol']||'';
-    if(!bySymbol[sym]) bySymbol[sym] = {buys:[], sells:[]};
-    const side = (o['side']||'').toLowerCase();
-    if(side==='buy') bySymbol[sym].buys.push(o);
-    else if(side==='sell') bySymbol[sym].sells.push(o);
-  });
+// Detect TV single-line CSV/TSV with headers
+function _isTradingViewCSV(headers){
+  const sig=['symbol','side','fill price','placing time','closing time','filled time','placed time','quantity'];
+  return sig.filter(h=>headers.includes(h)).length>=3;
+}
 
-  const maxId = trades.length ? Math.max(...trades.map(t=>t.id||0)) : 0;
-  let nextId = maxId + 1;
-  let imported = 0;
+// ── Multi-line paste parser ───────────────────────────────────────────────
+function _parseTVMultiline(text, input){
+  const rawLines = text.split('\n').map(l=>l.trim());
+  const orders=[];
+  let cur=null;
 
-  function normTVDate(str){
-    if(!str) return '';
-    // TV format: "2026-05-01 14:23:00" or "2026-05-01T14:23:00"
-    return str.replace('T',' ').split(' ')[0];
-  }
+  for(let i=0;i<rawLines.length;i++){
+    const line=rawLines[i];
+    if(!line) continue;
+    const tabs=line.split('\t');
+    const first=tabs[0].replace(/,/g,'').trim();
 
-  // Match pairs
-  Object.entries(bySymbol).forEach(([sym, {buys, sells}])=>{
-    const pairs = Math.min(buys.length, sells.length);
-    for(let p=0; p<pairs; p++){
-      const buy  = buys[p];
-      const sell = sells[p];
-      const entryOrder = buy;
-      const exitOrder  = sell;
-      const entryPrice = parseFloat(entryOrder['fill price']||0);
-      const exitPrice  = parseFloat(exitOrder['fill price']||0);
-      const qty = parseFloat(entryOrder['quantity']||1);
-      const pnl = (exitPrice - entryPrice) * qty;
-      const commission = (parseFloat(entryOrder['commission']||0) + parseFloat(exitOrder['commission']||0));
-      const netPnl = pnl - Math.abs(commission);
-      const date = normTVDate(entryOrder['placed time']||entryOrder['filled time']||'');
-
-      const dup = trades.find(t=>t.asset===sym && t.date===date && Math.abs(parseFloat(t.pnl)-netPnl)<0.01);
-      if(dup) continue;
-
-      let result = netPnl > 0 ? 'Win' : netPnl < 0 ? 'Loss' : 'BE';
-      // Clean symbol: remove BLACKBULL: CME_MINI: BINANCE: prefix
-      const cleanSym = sym.replace(/^[A-Z_]+:/,'');
-
-      trades.push({
-        id: nextId++,
-        date: date,
-        time: (entryOrder['placed time']||'').split(' ')[1]||'',
-        asset: cleanSym,
-        market: cleanSym.includes('BTC')||cleanSym.includes('ETH') ? 'Crypto' : 'Futures',
-        session: 'NY',
-        dir: 'Buy',
-        entry: String(entryPrice),
-        exit: String(exitPrice),
-        sl: '', tp: '',
-        risk: '', rr: '',
-        pnl: String(netPnl.toFixed(2)),
-        result: result,
-        quality: '',
-        strategy: '#TradingView',
-        setup: 'Imported from TradingView',
-        entryReason: '', exitReason: '',
-        emotion: '', mistakes: '', lessons: '',
-        _imported: true
-      });
-      imported++;
+    // Date line: first token looks like a datetime
+    if(_isDateStr(first)){
+      if(cur){
+        cur.placingTime=first;
+        cur.closingTime=(tabs[1]||'').trim();
+        // capture ticket and reported P&L from remaining tabs
+        const extras = tabs.slice(2).map(t=>t.trim()).filter(t=>t);
+        // Last numeric value before 'USD' is often the reported account balance — skip
+        // But a standalone number after ticket could be commission/pnl
+        // We'll look for a numeric tab that appears to be P&L (after ticket number)
+        // Actually: the balance (e.g. 34,806.98) after ticket is account balance, not pnl
+        // We'll NOT use it — pnl will be calculated from prices
+        orders.push(cur);
+        cur=null;
+      }
+      continue;
     }
 
-    // Unpaired singles (e.g. only sells = SHORT trades)
-    const extraSells = sells.slice(pairs);
-    const extraBuys  = buys.slice(pairs);
-    [...extraSells, ...extraBuys].forEach(o=>{
-      const side = (o['side']||'').toLowerCase();
-      const price = parseFloat(o['fill price']||0);
-      const date = normTVDate(o['placed time']||o['filled time']||'');
-      const cleanSym = sym.replace(/^[A-Z_]+:/,'');
-      const dup = trades.find(t=>t.asset===cleanSym && t.date===date && t.entry===String(price));
-      if(dup) return;
-      trades.push({
-        id: nextId++,
-        date: date,
-        time: (o['placed time']||'').split(' ')[1]||'',
-        asset: cleanSym,
-        market: cleanSym.includes('BTC')||cleanSym.includes('ETH') ? 'Crypto' : 'Futures',
-        session: 'NY',
-        dir: side==='sell' ? 'Sell' : 'Buy',
-        entry: String(price),
-        exit: '', sl:'', tp:'', risk:'', rr:'',
-        pnl: '0',
-        result: 'BE',
-        quality: '',
-        strategy: '#TradingView',
-        setup: 'TradingView - open/unpaired order',
-        entryReason:'', exitReason:'', emotion:'', mistakes:'', lessons:'',
-        _imported: true
-      });
-      imported++;
-    });
-  });
+    // Side line
+    if(_isSide(first)){
+      if(cur) cur.side=first.toLowerCase();
+      continue;
+    }
 
-  save();
-  renderDashboard();
-  renderCalendar();
-  renderJournal();
+    // Order type line
+    if(_isOrdType(first)){
+      if(cur) cur.orderType=first;
+      continue;
+    }
+
+    // Qty+prices line: first token is a number (qty)
+    const cleanFirst=first.replace(/,/g,'');
+    const asNum=parseFloat(cleanFirst);
+    if(!isNaN(asNum) && asNum>0 && cur && !cur.qty){
+      // qty is first number, fillPrice is last price on this line
+      cur.qty = asNum;
+      const nums=tabs.map(t=>parseFloat(t.replace(/,/g,'').trim())).filter(n=>!isNaN(n)&&n>0);
+      // For futures qty is small (1-100), for forex large (1000, 100000)
+      // Fill price = the largest reasonable price value (not the qty itself if small)
+      // Last numeric tab is usually the fill price
+      if(nums.length>=2) cur.fillPrice=nums[nums.length-1];
+      else if(nums.length===1) cur.fillPrice=nums[0];
+      continue;
+    }
+
+    // Symbol line: start new order
+    if(_isTVSymbol(first)){
+      if(cur) orders.push(cur); // save incomplete
+      cur={sym:_tvClean(first),side:'',orderType:'',qty:0,fillPrice:0,commission:0,placingTime:'',closingTime:''};
+      continue;
+    }
+    // Currency line (USD, EUR) — marks end of order block
+    if(line==='USD'||line==='EUR'||line==='GBP'){
+      if(cur) { cur.currency=line; }
+      continue;
+    }
+    // Standalone decimal number (like 1,999.06 or 34,806.98) — could be reported P&L or balance
+    // We store the LAST such number before USD as potential context
+    const maybeNum = parseFloat(line.replace(/,/g,''));
+    if(!isNaN(maybeNum) && maybeNum>0 && cur && cur.fillPrice && !line.includes('\t')){
+      cur._lastNum = maybeNum; // store for reference
+      continue;
+    }
+    // Numeric line that could be account balance after trade
+    // The pattern: large number appearing alone = account balance (NOT pnl)
+    // Skip these
+    // anything else → skip
+  }
+  if(cur) orders.push(cur);
+  return _tvFinalizePairs(orders, input, 'TradingView');
+}
+
+// ── Single-line CSV parser ────────────────────────────────────────────────
+function _parseTradingViewCSV(lines, sep, input){
+  const headers=lines[0].split(sep).map(h=>h.replace(/"/g,'').trim().toLowerCase());
+  const orders=[];
+  for(let i=1;i<lines.length;i++){
+    const cols=lines[i].split(sep).map(c=>c.replace(/"/g,'').trim());
+    if(cols.length<3) continue;
+    const row={};
+    headers.forEach((h,idx)=>{row[h]=cols[idx]||'';});
+    const side=(row['side']||'').toLowerCase();
+    if(!_isSide(side)) continue;
+    const status=(row['status']||'').toLowerCase();
+    if(status&&status!=='filled') continue;
+    const sym=_tvClean(row['symbol']||'');
+    if(!sym) continue;
+    orders.push({
+      sym, side,
+      qty:_tvNum(row['quantity']||row['qty']||'1'),
+      fillPrice:_tvNum(row['fill price']||row['fillprice']||row['price']||'0'),
+      commission:parseFloat(row['commission']||'0')||0,
+      placingTime:row['placing time']||row['placed time']||row['time']||'',
+      closingTime:row['closing time']||row['filled time']||row['close time']||''
+    });
+  }
+  return _tvFinalizePairs(orders, input, 'TradingView');
+}
+
+// ── FIFO pair matcher ─────────────────────────────────────────────────────
+function _tvFinalizePairs(orders, input, source){
+  orders.sort((a,b)=>new Date(a.placingTime||0)-new Date(b.placingTime||0));
+  const queues={}, done=[];
+  orders.forEach(o=>{
+    if(!o.sym||!o.side) return;
+    if(!queues[o.sym]) queues[o.sym]=[];
+    const q=queues[o.sym];
+    const opp=o.side==='buy'?'sell':'buy';
+    const mi=q.findIndex(x=>x.side===opp);
+    if(mi>=0){
+      const m=q.splice(mi,1)[0];
+      const isLong=m.side==='buy';
+      const eP=isLong?m.fillPrice:o.fillPrice;
+      const xP=isLong?o.fillPrice:m.fillPrice;
+      const qty=Math.min(m.qty||1,o.qty||1);
+      // Use _lastNum from either order as reported P&L (TV shows it before USD line)
+      const repPnl = m._lastNum || o._lastNum || null;
+      let raw;
+      if(repPnl && repPnl > 0){
+        // Reported P&L is always positive in TV — determine sign from direction+prices
+        const signCheck = isLong ? (xP - eP) : (eP - xP);
+        raw = signCheck >= 0 ? repPnl : -repPnl;
+      } else {
+        // Fallback: calculate from price difference
+        function _ptVal(sym){
+          const s=(sym||'').toUpperCase().replace(/^[A-Z0-9]+:/,'');
+          if(s.match(/^NQ|^MNQ/)) return 20;
+          if(s.match(/^ES|^MES/)) return 50;
+          if(s.match(/^RTY|^M2K/)) return 50;
+          if(s.match(/^YM|^MYM/)) return 5;
+          if(s.match(/^GC|^MGC/)) return 100;
+          if(s.match(/^XAU/)) return 1;
+          if(s.match(/^CL/)) return 1000;
+          return 1;
+        }
+        const ptv = _ptVal(o.sym);
+        raw = isLong?(xP-eP)*qty*ptv:(eP-xP)*qty*ptv;
+      }
+      const comm=Math.abs(m.commission||0)+Math.abs(o.commission||0);
+      done.push({sym:o.sym,dir:isLong?'Buy':'Sell',entry:eP,exit:xP,qty,netPnl:raw-comm,
+        entryTime:isLong?m.placingTime:o.placingTime,
+        exitTime:isLong?o.closingTime:m.closingTime});
+    } else { q.push(o); }
+  });
+  Object.values(queues).forEach(q=>q.forEach(o=>done.push({
+    sym:o.sym,dir:o.side==='buy'?'Buy':'Sell',entry:o.fillPrice,exit:0,
+    qty:o.qty||1,netPnl:0,entryTime:o.placingTime||o.closingTime,exitTime:'',_open:true
+  })));
+
+  const maxId=trades.length?Math.max(...trades.map(t=>t.id||0)):0;
+  let nextId=maxId+1,imported=0;
+  done.forEach(t=>{
+    const date=_tvDate(t.entryTime),time=_tvTime(t.entryTime);
+    const pnl=parseFloat((t.netPnl||0).toFixed(2));
+    const dup=trades.find(x=>x.asset===t.sym&&x.date===date&&Math.abs(parseFloat(x.pnl)-pnl)<0.01&&String(x.entry)===String(t.entry));
+    if(dup) return;
+    trades.push({id:nextId++,date,time,asset:t.sym,market:_tvMarket(t.sym),session:'NY',
+      dir:t.dir,entry:String(t.entry),exit:String(t.exit||''),sl:'',tp:'',risk:'',rr:'',
+      pnl:String(pnl),result:pnl>0?'Win':pnl<0?'Loss':'BE',quality:'',
+      strategy:'#TradingView',sessionTag:'',
+      setup:t._open?'TradingView — open position':'Imported from TradingView',
+      entryReason:'',exitReason:'',emotion:'',mistakes:'',lessons:'',_imported:true});
+    imported++;
+  });
+  save();renderDashboard();renderCalendar();renderJournal();
   if(input) input.value='';
-  _showToast(imported > 0 ? `✅ ${imported} trades imported from TradingView` : '⚠ No filled trades found', imported>0?'#00f2ff':'#ffd700');
+  _showToast(imported>0?`✅ ${imported} trade${imported>1?'s':''} imported from ${source}`:'⚠ No trades matched — check data',imported>0?'#00f2ff':'#ffd700');
 }
 
 function _showToast(msg, color){
@@ -3064,12 +3220,105 @@ function _parseKMLCSV(lines, sep, input){
   );
 }
 
+
+// ===== TV BALANCE HISTORY PARSER =====
+function _isTVBalanceHistory(text){
+  return text.includes('Close short position for symbol') || text.includes('Close long position for symbol');
+}
+
+function _parseTVBalanceHistory(text, input){
+  const lines = text.split('\n').map(l=>l.trim());
+  let imported = 0;
+  const maxId = trades.length ? Math.max(...trades.map(t=>t.id||0)) : 0;
+  let nextId = maxId + 1;
+
+  let i = 0;
+  while(i < lines.length){
+    const line = lines[i];
+
+    // Look for datetime line (starts with YYYY-MM-DD)
+    if(!line.match(/^\d{4}-\d{2}-\d{2}/)){i++;continue;}
+
+    const datetime = line.split('\t')[0].trim();
+    const datePart = datetime.split(' ')[0];
+    const timePart = datetime.split(' ')[1]||'';
+
+    // Next non-empty line should be the P&L (e.g. "−600.00" or "+620.00")
+    let pnlStr = '', j = i+1;
+    while(j < lines.length && !pnlStr){
+      const l = lines[j].trim();
+      if(l === 'USD' || l === 'EUR' || l === 'GBP'){ j++; continue; }
+      // P&L line: starts with − or + or digit
+      if(l.match(/^[−\-\+\d]/)){
+        pnlStr = l.replace(/,/g,'').replace('−','-');
+        break;
+      }
+      j++;
+    }
+    const pnl = parseFloat(pnlStr) || 0;
+
+    // Find the "Close X position for symbol Y" line
+    let closeLine = '', k = i+1;
+    while(k < lines.length && k < i+6){
+      if(lines[k].includes('Close') && lines[k].includes('position for symbol')){
+        closeLine = lines[k];
+        break;
+      }
+      k++;
+    }
+
+    if(!closeLine){ i++; continue; }
+
+    // Parse closeLine:
+    // "Close short position for symbol CME_MINI:NQ1! at price 26747.00 for 1 units. Position AVG Price was 26717.00..."
+    const dirMatch = closeLine.match(/Close (long|short) position/i);
+    const symMatch = closeLine.match(/for symbol ([\w.:]+)/);
+    const exitMatch = closeLine.match(/at price ([\d.]+)/);
+    const entryMatch = closeLine.match(/Position AVG Price was ([\d.]+)/);
+    const qtyMatch = closeLine.match(/for ([\d,]+) units/);
+
+    if(!symMatch || !exitMatch || !entryMatch) { i++; continue; }
+
+    const rawSym = symMatch[1];
+    const sym = rawSym.replace(/^[A-Z0-9]+:/,''); // strip broker prefix
+    const dir = dirMatch ? (dirMatch[1].toLowerCase()==='long' ? 'Buy' : 'Sell') : 'Buy';
+    const exitPrice = parseFloat(exitMatch[1]);
+    const entryPrice = parseFloat(entryMatch[1]);
+
+    let result = 'BE';
+    if(pnl > 0) result = 'Win';
+    else if(pnl < 0) result = 'Loss';
+
+    trades.push({
+      id: nextId++,
+      date: datePart,
+      time: timePart,
+      asset: sym,
+      market: _guessMarket(sym),
+      session: _guessSession(datetime),
+      dir,
+      entry: String(entryPrice),
+      exit: String(exitPrice),
+      sl:'', tp:'', risk:'', rr:'',
+      pnl: String(pnl),
+      result,
+      quality:'', strategy:'#TradingView', sessionTag:'',
+      setup:'Imported from TradingView',
+      entryReason:'', exitReason:'', emotion:'', mistakes:'', lessons:'',
+      _imported: true
+    });
+    imported++;
+    i = k + 1;
+  }
+
+  _finishImport(imported, input);
+}
+
 function _parseAndImport(text, input){
   const lines = text.split('\n').map(l=>l.trim()).filter(l=>l);
   if(!lines.length){ alert('File empty!'); return; }
 
   const sep = lines[0].includes('\t') ? '\t' : ',';
-  // Use basic split for header only (no quoted values in headers)
   const headers = lines[0].split(sep).map(h=>h.replace(/"/g,'').trim().toLowerCase());
 
   // Auto-detect KML/Tradovate Performance CSV
@@ -3077,9 +3326,14 @@ function _parseAndImport(text, input){
     return _parseKMLCSV(lines, sep, input);
   }
 
-  // Auto-detect TradingView CSV format
+  // Auto-detect TradingView CSV with headers
   if(_isTradingViewCSV(headers)){
     return _parseTradingViewCSV(lines, sep, input);
+  }
+
+  // Auto-detect TradingView multi-line paste (no headers, each order = multiple lines)
+  if(_isTVMultiline(text)){
+    return _parseTVMultiline(text, input);
   }
 
   let imported = 0;
@@ -3154,6 +3408,216 @@ function _parseAndImport(text, input){
   toast.style.cssText='position:fixed;bottom:24px;right:24px;background:'+(imported>0?'#00f2ff':'#ffd700')+';color:#000;padding:12px 20px;border-radius:10px;font-weight:600;font-size:14px;z-index:9999;font-family:var(--font-mono)';
   document.body.appendChild(toast);
   setTimeout(()=>toast.remove(), 3500);
+}
+
+// ===== AI FORMAT CONVERTER =====
+let convParsedTrades = [];
+
+function convSniffFormat(text){
+  const badge = document.getElementById('conv-fmt-badge');
+  if(!text.trim()){ badge.textContent='Format: —'; return; }
+  const lines = text.split('\n').map(l=>l.trim()).filter(l=>l);
+  if(_isKMLCSV(lines[0].split(',').map(h=>h.toLowerCase().trim())))
+    badge.textContent='Format: KML/Tradovate CSV';
+  else if(_isTVMultiline(text))
+    badge.textContent='Format: TradingView paste';
+  else if(_isTradingViewCSV(lines[0].split(/[\t,]/).map(h=>h.toLowerCase().trim())))
+    badge.textContent='Format: TradingView CSV';
+  else
+    badge.textContent='Format: Unknown → AI will convert';
+}
+
+async function runConverter(){
+  const text = document.getElementById('conv-input').value.trim();
+  if(!text){ alert('Paste some data first!'); return; }
+  const out = document.getElementById('conv-output');
+  const bar = document.getElementById('conv-import-bar');
+  const countBadge = document.getElementById('conv-count-badge');
+  convParsedTrades = [];
+  bar.style.display='none';
+
+  // ── Try built-in parsers first (fast, no AI needed) ──
+  const lines = text.split('\n').map(l=>l.trim()).filter(l=>l);
+  const sep   = lines[0].includes('\t')?'\t':',';
+  const hdrs  = lines[0].split(sep).map(h=>h.replace(/"/g,'').trim().toLowerCase());
+
+  let nativeResult = null;
+  if(_isTVBalanceHistory(text)){
+    nativeResult = _convCaptureParse(()=>_parseTVBalanceHistory(text,null), 'TradingView Balance History');
+  } else if(_isKMLCSV(hdrs)){
+    nativeResult = _convCaptureParse(()=>_parseKMLCSV(lines,sep,null), 'KML/Tradovate');
+  } else if(_isTradingViewCSV(hdrs)){
+    nativeResult = _convCaptureParse(()=>_parseTradingViewCSV(lines,sep,null), 'TradingView CSV');
+  } else if(_isTVMultiline(text)){
+    nativeResult = _convCaptureParse(()=>_parseTVMultiline(text,null), 'TradingView paste');
+  }
+
+  if(nativeResult && nativeResult.length>0){
+    convParsedTrades = nativeResult;
+    _convShowPreview(nativeResult, 'Auto-detected');
+    return;
+  }
+
+  // ── Unknown format → send to AI ──
+  out.innerHTML = '<div style="color:var(--text2)">🤖 AI is reading your data...<br><span style="color:var(--text3);font-size:11px">This takes a few seconds</span></div>';
+
+  const systemPrompt = `You are a trading data parser. The user will paste trade history in ANY format.
+Your job: extract every COMPLETED (closed) trade and return ONLY a JSON array, no markdown, no explanation.
+
+CRITICAL — MATCHING ORDERS INTO TRADES:
+- TradingView Paper Trading and many brokers export individual orders (Buy order + Sell order separately)
+- You MUST match/pair them into completed trades using FIFO logic:
+  * A Buy order followed by a Sell order on the SAME symbol = 1 Long trade (dir=Buy, entry=buy price, exit=sell price)
+  * A Sell order followed by a Buy order on the SAME symbol = 1 Short trade (dir=Sell, entry=sell price, exit=buy price)
+- NEVER output individual orders as trades — always pair them
+- If an order has no matching close, skip it
+
+P&L CALCULATION (when not given directly):
+- Forex pairs (EURUSD, GBPUSD, etc): pnl = (exit - entry) × qty × 100000 × pip_value (approx)
+- NQ/NQ1!/CME_MINI:NQ1!: pnl = (exit - entry) × qty × 20
+- ES/MES: pnl = (exit - entry) × qty × 50
+- USTEC/ICMARKETS:USTEC (CFD): pnl = (exit - entry) × qty × 1
+- For Short trades: pnl = (entry - exit) × qty × point_value
+- If you cannot calculate exactly, estimate from price difference × qty
+
+Each trade object must have these exact keys:
+{
+  "date": "YYYY-MM-DD",
+  "time": "HH:MM:SS",
+  "asset": "SYMBOL (strip broker prefix like ICMARKETS: or CME_MINI:)",
+  "dir": "Buy" or "Sell",
+  "entry": number,
+  "exit": number,
+  "qty": number,
+  "pnl": number,
+  "market": "Forex" or "Futures" or "Crypto" or "Indices"
+}
+
+Rules:
+- date/time = entry (open) datetime
+- market: NQ/ES/USTEC/indices = Futures or Indices; BTC/ETH = Crypto; else Forex
+- If a field is unknown use: date="", time="", qty=1, pnl=0
+- Return ONLY the JSON array, nothing else, no backticks, no explanation`;
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        model:'claude-sonnet-4-20250514',
+        max_tokens:4000,
+        system: systemPrompt,
+        messages:[{role:'user', content:'Parse this trade history:\n\n'+text}]
+      })
+    });
+    const data = await res.json();
+    const raw = (data.content||[]).map(c=>c.text||'').join('').trim();
+
+    let parsed;
+    try {
+      const clean = raw.replace(/^```[a-z]*\n?/,'').replace(/```$/,'').trim();
+      parsed = JSON.parse(clean);
+    } catch(e){
+      out.innerHTML='<div style="color:var(--red)">⚠ AI could not parse this format.<br><span style="font-size:11px;color:var(--text3)">Try copying the data differently or cleaning it up</span></div>';
+      return;
+    }
+
+    if(!Array.isArray(parsed)||!parsed.length){
+      out.innerHTML='<div style="color:var(--red)">⚠ No trades found in the data.</div>';
+      return;
+    }
+
+    // Normalize AI output into trade objects
+    convParsedTrades = parsed.map((t,i)=>({
+      id: 99000+i,
+      date: t.date||'',
+      time: t.time||'',
+      asset: (t.asset||t.symbol||'').replace(/^[A-Z0-9_]+:/,''),
+      market: t.market||'Forex',
+      session:'NY',
+      dir: t.dir||'Buy',
+      entry: String(t.entry||''),
+      exit:  String(t.exit||''),
+      sl:'', tp:'', risk:'', rr:'',
+      pnl:   String(parseFloat(t.pnl||0).toFixed(2)),
+      result: parseFloat(t.pnl||0)>0?'Win':parseFloat(t.pnl||0)<0?'Loss':'BE',
+      quality:'', strategy:'#Converted', sessionTag:'',
+      setup:'Converted by AI', entryReason:'', exitReason:'',
+      emotion:'', mistakes:'', lessons:'', _imported:true
+    }));
+
+    _convShowPreview(convParsedTrades, 'AI');
+  } catch(err){
+    out.innerHTML='<div style="color:var(--red)">⚠ Error: '+err.message+'</div>';
+  }
+}
+
+// Capture trades parsed by native parsers without modifying the trades array
+function _convCaptureParse(fn, label){
+  const backup = [...trades];
+  fn();
+  const added = trades.filter(t=>!backup.find(b=>b.id===t.id));
+  // Revert — we'll re-import on confirm
+  trades.length = 0;
+  backup.forEach(t=>trades.push(t));
+  save();
+  return added;
+}
+
+function _convShowPreview(list, source){
+  const out = document.getElementById('conv-output');
+  const bar = document.getElementById('conv-import-bar');
+  const badge = document.getElementById('conv-count-badge');
+  badge.textContent = list.length+' trade'+(list.length!==1?'s':'');
+
+  let html = '<div style="width:100%;overflow-x:auto">';
+  html += '<div style="color:var(--green);font-size:12px;margin-bottom:10px">✅ '+source+' detected — '+list.length+' trades ready</div>';
+  html += '<table style="width:100%;border-collapse:collapse;font-size:11px">';
+  html += '<thead><tr style="color:var(--text3)">';
+  ['Date','Asset','Dir','Entry','Exit','PnL','Market'].forEach(h=>{
+    html += '<th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border)">'+h+'</th>';
+  });
+  html += '</tr></thead><tbody>';
+
+  list.slice(0,15).forEach(t=>{
+    const pnl = parseFloat(t.pnl||0);
+    const pnlColor = pnl>0?'var(--green)':pnl<0?'var(--red)':'var(--text3)';
+    html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.04)">';
+    html += '<td style="padding:5px 8px;color:var(--text2)">'+t.date+'</td>';
+    html += '<td style="padding:5px 8px;color:var(--text);font-weight:500">'+t.asset+'</td>';
+    html += '<td style="padding:5px 8px;color:'+(t.dir==='Buy'?'var(--green)':'var(--red)')+'">'+t.dir+'</td>';
+    html += '<td style="padding:5px 8px;color:var(--text2)">'+t.entry+'</td>';
+    html += '<td style="padding:5px 8px;color:var(--text2)">'+t.exit+'</td>';
+    html += '<td style="padding:5px 8px;color:'+pnlColor+';font-weight:600">'+(pnl>=0?'+':'')+pnl.toFixed(2)+'</td>';
+    html += '<td style="padding:5px 8px;color:var(--text3)">'+t.market+'</td>';
+    html += '</tr>';
+  });
+  if(list.length>15){
+    html += '<tr><td colspan="7" style="padding:6px 8px;color:var(--text3);font-style:italic">... and '+(list.length-15)+' more</td></tr>';
+  }
+  html += '</tbody></table></div>';
+  out.innerHTML = html;
+  bar.style.display = 'block';
+}
+
+function convDoImport(){
+  if(!convParsedTrades.length){ alert('Nothing to import!'); return; }
+  const maxId = trades.length?Math.max(...trades.map(t=>t.id||0)):0;
+  let nextId = maxId+1, imported=0;
+  convParsedTrades.forEach(t=>{
+    const dup = trades.find(x=>x.asset===t.asset&&x.date===t.date&&Math.abs(parseFloat(x.pnl)-parseFloat(t.pnl))<0.01);
+    if(dup) return;
+    trades.push({...t, id:nextId++});
+    imported++;
+  });
+  save(); renderDashboard(); renderCalendar(); renderJournal();
+  _showToast(imported>0?`✅ ${imported} trades imported successfully`:'⚠ All trades already exist (duplicates skipped)', imported>0?'#00f2ff':'#ffd700');
+  if(imported>0){
+    document.getElementById('conv-input').value='';
+    document.getElementById('conv-output').innerHTML='<div style="color:var(--green);text-align:center;padding:20px">✅ '+imported+' trades imported!</div>';
+    document.getElementById('conv-import-bar').style.display='none';
+    convParsedTrades=[];
+  }
 }
 
 // ===== CHECKLIST TEMPLATES =====
