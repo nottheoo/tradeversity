@@ -2112,7 +2112,7 @@ async function exportToAdmin(){
   }catch(err){
     console.warn('Supabase upload failed:', err.message || err);
     // fallback: open admin page and postMessage (if admin is open) or download
-    const adminUrl = 'admin.html';
+    const adminUrl = 'https://nottheoo.github.io/tradeversityadmin/';
     const win = window.open(adminUrl, '_blank');
     if(win){
       const trySend = ()=>{ try{ win.postMessage({type:'student_export', payload}, window.location.origin); }catch(e){} };
