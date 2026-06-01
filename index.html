@@ -25,7 +25,7 @@
         +'<a href="'+_href+'" target="_blank" rel="noopener"'
         +' style="background:#00f2ff;color:#000;font-weight:800;font-size:16px;padding:14px 32px;border-radius:10px;text-decoration:none;margin-bottom:14px;display:block;width:100%;max-width:280px;box-sizing:border-box">'
         +'🌐 Open in Browser</a>'
-        +'<button onclick="document.getElementById('tg-banner').remove()"'
+        +'<button onclick="document.getElementById(\\'tg-banner\\').remove()"'
         +' style="background:rgba(255,255,255,0.07);color:#aaa;border:1px solid #333;font-size:13px;padding:10px 24px;border-radius:8px;cursor:pointer;width:100%;max-width:280px">'
         +'Continue anyway (data won't save)</button>'
         +'</div>';
@@ -2877,6 +2877,18 @@ function _tvMarket(sym){
 }
 function _tvClean(sym){ return (sym||'').replace(/^[A-Z0-9_]+:/,'').trim(); }
 function _tvNum(s){ return parseFloat((s||'').toString().replace(/,/g,''))||0; }
+function _guessMarket(sym){
+  return /BTC|ETH|SOL|BNB|XRP|USDT/i.test(sym)?'Crypto'
+        :/NQ|ES|YM|RTY|CL|GC|USTEC|NQ1/i.test(sym)?'Futures':'Forex';
+}
+function _guessSession(datetime){
+  if(!datetime) return 'Other';
+  const hour = parseInt(datetime.split(' ')[1]?.split(':')[0])||0;
+  if(hour>=8 && hour<12) return 'London';
+  if(hour>=12 && hour<21) return 'NY';
+  if(hour<8) return 'Asia';
+  return 'Other';
+}
 function _isDateStr(s){ return /^\d{4}-\d{2}-\d{2}[ T]/.test(s)||/^\d{2}\/\d{2}\/\d{4}/.test(s); }
 function _isSide(s){ return /^(buy|sell)$/i.test((s||'').trim()); }
 function _isOrdType(s){ return /^(market|limit|stop|stop limit)$/i.test((s||'').trim()); }
@@ -3227,91 +3239,86 @@ function _isTVBalanceHistory(text){
 }
 
 function _parseTVBalanceHistory(text, input){
-  const lines = text.split('\n').map(l=>l.trim());
   let imported = 0;
   const maxId = trades.length ? Math.max(...trades.map(t=>t.id||0)) : 0;
   let nextId = maxId + 1;
 
-  let i = 0;
-  while(i < lines.length){
-    const line = lines[i];
-
-    // Look for datetime line (starts with YYYY-MM-DD)
-    if(!line.match(/^\d{4}-\d{2}-\d{2}/)){i++;continue;}
-
-    const datetime = line.split('\t')[0].trim();
-    const datePart = datetime.split(' ')[0];
-    const timePart = datetime.split(' ')[1]||'';
-
-    // Next non-empty line should be the P&L (e.g. "−600.00" or "+620.00")
-    let pnlStr = '', j = i+1;
-    while(j < lines.length && !pnlStr){
-      const l = lines[j].trim();
-      if(l === 'USD' || l === 'EUR' || l === 'GBP'){ j++; continue; }
-      // P&L line: starts with − or + or digit
-      if(l.match(/^[−\-\+\d]/)){
-        pnlStr = l.replace(/,/g,'').replace('−','-');
-        break;
-      }
-      j++;
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  
+  // Process every 4 lines as one trade
+  for(let i = 0; i < lines.length - 3; i += 4){
+    try {
+      const line1 = lines[i];      // datetime + balances
+      const line2 = lines[i+1];    // PnL
+      const line3 = lines[i+2];    // Currency (USD)
+      const line4 = lines[i+3];    // Trade description
+      
+      // Skip if line4 doesn't contain "Close" keyword
+      if(!line4.match(/close\s+(long|short)/i)) continue;
+      
+      // Extract datetime from line 1
+      const dateMatch = line1.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})/);
+      if(!dateMatch) continue;
+      const date = dateMatch[1];
+      const time = dateMatch[2];
+      
+      // Extract PnL from line 2 (handle −, -, +, commas)
+      let pnlStr = line2.replace(/[−–]/g,'-').replace(/,/g,'').trim();
+      const pnl = parseFloat(pnlStr) || 0;
+      
+      // Extract direction from line 4
+      const dirMatch = line4.match(/close\s+(long|short)/i);
+      const direction = dirMatch ? dirMatch[1].toLowerCase() : null;
+      if(!direction) continue;
+      
+      // Extract symbol from line 4
+      const symMatch = line4.match(/for\s+symbol\s+([\w:.!_-]+)/i);
+      let symbol = symMatch ? symMatch[1] : null;
+      if(!symbol) continue;
+      // Clean broker prefix
+      symbol = symbol.replace(/^[A-Z0-9_]+:/,'');
+      
+      // Extract exit price from line 4
+      const exitMatch = line4.match(/at\s+price\s+([\d.]+)/);
+      const exitPrice = exitMatch ? parseFloat(exitMatch[1]) : 0;
+      
+      // Extract entry price (AVG Price) from line 4
+      const entryMatch = line4.match(/Position\s+AVG\s+Price\s+was\s+([\d.]+)/i);
+      const entryPrice = entryMatch ? parseFloat(entryMatch[1]) : 0;
+      
+      const dir = direction === 'long' ? 'Buy' : 'Sell';
+      const result = pnl > 0 ? 'Win' : pnl < 0 ? 'Loss' : 'BE';
+      const market = _guessMarket(symbol);
+      const session = _guessSession(date + ' ' + time);
+      
+      // Check for duplicates
+      const dup = trades.find(t => t.asset === symbol && t.date === date && Math.abs(parseFloat(t.pnl) - pnl) < 0.01);
+      if(dup) continue;
+      
+      trades.push({
+        id: nextId++, date, time,
+        asset: symbol, market: market, session: session,
+        dir, entry: String(entryPrice), exit: String(exitPrice),
+        sl:'', tp:'', risk:'', rr:'',
+        pnl: String(pnl), result,
+        quality:'', strategy:'#Broker', sessionTag:'',
+        setup:'Imported from Broker Statement',
+        entryReason:'', exitReason:'', emotion:'', mistakes:'', lessons:'',
+        _imported: true
+      });
+      imported++;
+    } catch(e) {
+      // Skip malformed trades
+      continue;
     }
-    const pnl = parseFloat(pnlStr) || 0;
-
-    // Find the "Close X position for symbol Y" line
-    let closeLine = '', k = i+1;
-    while(k < lines.length && k < i+6){
-      if(lines[k].includes('Close') && lines[k].includes('position for symbol')){
-        closeLine = lines[k];
-        break;
-      }
-      k++;
-    }
-
-    if(!closeLine){ i++; continue; }
-
-    // Parse closeLine:
-    // "Close short position for symbol CME_MINI:NQ1! at price 26747.00 for 1 units. Position AVG Price was 26717.00..."
-    const dirMatch = closeLine.match(/Close (long|short) position/i);
-    const symMatch = closeLine.match(/for symbol ([\w.:]+)/);
-    const exitMatch = closeLine.match(/at price ([\d.]+)/);
-    const entryMatch = closeLine.match(/Position AVG Price was ([\d.]+)/);
-    const qtyMatch = closeLine.match(/for ([\d,]+) units/);
-
-    if(!symMatch || !exitMatch || !entryMatch) { i++; continue; }
-
-    const rawSym = symMatch[1];
-    const sym = rawSym.replace(/^[A-Z0-9]+:/,''); // strip broker prefix
-    const dir = dirMatch ? (dirMatch[1].toLowerCase()==='long' ? 'Buy' : 'Sell') : 'Buy';
-    const exitPrice = parseFloat(exitMatch[1]);
-    const entryPrice = parseFloat(entryMatch[1]);
-
-    let result = 'BE';
-    if(pnl > 0) result = 'Win';
-    else if(pnl < 0) result = 'Loss';
-
-    trades.push({
-      id: nextId++,
-      date: datePart,
-      time: timePart,
-      asset: sym,
-      market: _guessMarket(sym),
-      session: _guessSession(datetime),
-      dir,
-      entry: String(entryPrice),
-      exit: String(exitPrice),
-      sl:'', tp:'', risk:'', rr:'',
-      pnl: String(pnl),
-      result,
-      quality:'', strategy:'#TradingView', sessionTag:'',
-      setup:'Imported from TradingView',
-      entryReason:'', exitReason:'', emotion:'', mistakes:'', lessons:'',
-      _imported: true
-    });
-    imported++;
-    i = k + 1;
   }
 
-  _finishImport(imported, input);
+  save();
+  renderDashboard();
+  renderCalendar();
+  renderJournal();
+  if(input) input.value = '';
+  _showToast(imported > 0 ? `✅ ${imported} trade${imported>1?'s':''} imported successfully` : '⚠ No trades found — check format', imported > 0 ? '#00f2ff' : '#ffd700');
 }
 
 function _parseAndImport(text, input){
@@ -3435,6 +3442,7 @@ async function runConverter(){
   const countBadge = document.getElementById('conv-count-badge');
   convParsedTrades = [];
   bar.style.display='none';
+  out.innerHTML = '<div style="color:var(--text3);text-align:center">⏳ Processing...</div>';
 
   // ── Try built-in parsers first (fast, no AI needed) ──
   const lines = text.split('\n').map(l=>l.trim()).filter(l=>l);
@@ -3458,98 +3466,8 @@ async function runConverter(){
     return;
   }
 
-  // ── Unknown format → send to AI ──
-  out.innerHTML = '<div style="color:var(--text2)">🤖 AI is reading your data...<br><span style="color:var(--text3);font-size:11px">This takes a few seconds</span></div>';
-
-  const systemPrompt = `You are a trading data parser. The user will paste trade history in ANY format.
-Your job: extract every COMPLETED (closed) trade and return ONLY a JSON array, no markdown, no explanation.
-
-CRITICAL — MATCHING ORDERS INTO TRADES:
-- TradingView Paper Trading and many brokers export individual orders (Buy order + Sell order separately)
-- You MUST match/pair them into completed trades using FIFO logic:
-  * A Buy order followed by a Sell order on the SAME symbol = 1 Long trade (dir=Buy, entry=buy price, exit=sell price)
-  * A Sell order followed by a Buy order on the SAME symbol = 1 Short trade (dir=Sell, entry=sell price, exit=buy price)
-- NEVER output individual orders as trades — always pair them
-- If an order has no matching close, skip it
-
-P&L CALCULATION (when not given directly):
-- Forex pairs (EURUSD, GBPUSD, etc): pnl = (exit - entry) × qty × 100000 × pip_value (approx)
-- NQ/NQ1!/CME_MINI:NQ1!: pnl = (exit - entry) × qty × 20
-- ES/MES: pnl = (exit - entry) × qty × 50
-- USTEC/ICMARKETS:USTEC (CFD): pnl = (exit - entry) × qty × 1
-- For Short trades: pnl = (entry - exit) × qty × point_value
-- If you cannot calculate exactly, estimate from price difference × qty
-
-Each trade object must have these exact keys:
-{
-  "date": "YYYY-MM-DD",
-  "time": "HH:MM:SS",
-  "asset": "SYMBOL (strip broker prefix like ICMARKETS: or CME_MINI:)",
-  "dir": "Buy" or "Sell",
-  "entry": number,
-  "exit": number,
-  "qty": number,
-  "pnl": number,
-  "market": "Forex" or "Futures" or "Crypto" or "Indices"
-}
-
-Rules:
-- date/time = entry (open) datetime
-- market: NQ/ES/USTEC/indices = Futures or Indices; BTC/ETH = Crypto; else Forex
-- If a field is unknown use: date="", time="", qty=1, pnl=0
-- Return ONLY the JSON array, nothing else, no backticks, no explanation`;
-
-  try {
-    const res = await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({
-        model:'claude-sonnet-4-20250514',
-        max_tokens:4000,
-        system: systemPrompt,
-        messages:[{role:'user', content:'Parse this trade history:\n\n'+text}]
-      })
-    });
-    const data = await res.json();
-    const raw = (data.content||[]).map(c=>c.text||'').join('').trim();
-
-    let parsed;
-    try {
-      const clean = raw.replace(/^```[a-z]*\n?/,'').replace(/```$/,'').trim();
-      parsed = JSON.parse(clean);
-    } catch(e){
-      out.innerHTML='<div style="color:var(--red)">⚠ AI could not parse this format.<br><span style="font-size:11px;color:var(--text3)">Try copying the data differently or cleaning it up</span></div>';
-      return;
-    }
-
-    if(!Array.isArray(parsed)||!parsed.length){
-      out.innerHTML='<div style="color:var(--red)">⚠ No trades found in the data.</div>';
-      return;
-    }
-
-    // Normalize AI output into trade objects
-    convParsedTrades = parsed.map((t,i)=>({
-      id: 99000+i,
-      date: t.date||'',
-      time: t.time||'',
-      asset: (t.asset||t.symbol||'').replace(/^[A-Z0-9_]+:/,''),
-      market: t.market||'Forex',
-      session:'NY',
-      dir: t.dir||'Buy',
-      entry: String(t.entry||''),
-      exit:  String(t.exit||''),
-      sl:'', tp:'', risk:'', rr:'',
-      pnl:   String(parseFloat(t.pnl||0).toFixed(2)),
-      result: parseFloat(t.pnl||0)>0?'Win':parseFloat(t.pnl||0)<0?'Loss':'BE',
-      quality:'', strategy:'#Converted', sessionTag:'',
-      setup:'Converted by AI', entryReason:'', exitReason:'',
-      emotion:'', mistakes:'', lessons:'', _imported:true
-    }));
-
-    _convShowPreview(convParsedTrades, 'AI');
-  } catch(err){
-    out.innerHTML='<div style="color:var(--red)">⚠ Error: '+err.message+'</div>';
-  }
+  // ── Unknown format → show helpful error ──
+  out.innerHTML = '<div style="color:var(--amber)">⚠ Format not recognized.<br><br><span style="font-size:12px;color:var(--text3);line-height:1.8">Expected format:<br><code style="color:var(--green);font-size:10px;background:var(--bg3);padding:8px;border-radius:4px;display:block;margin:8px 0">2026-04-20 13:47:10&nbsp;&nbsp;82016.17&nbsp;&nbsp;81416.17&nbsp;&nbsp;−600 USD<br/>Close short position for symbol CME_MINI:NQ1! at price 26747.00 for 1 units.<br/>Position AVG Price was 26717.00</code><br/><b style="color:var(--text)">Paste TradingView data, MT5 CSV, or broker statements.</b></span></div>';
 }
 
 // Capture trades parsed by native parsers without modifying the trades array
